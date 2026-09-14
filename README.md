@@ -77,7 +77,7 @@ terraform destroy
 
 ### `s3-bucket-to-iceberg` — automatic trigger
 
-Uploading a `.csv` to the source bucket automatically kicks off the `source_to_bronze` Glue job (via a native S3 → EventBridge → Glue Workflow chain — see `eventbridge.tf`). The original `ON_DEMAND` trigger is still available for manual re-runs.
+Uploading a `.csv` to the source bucket automatically kicks off the `source_to_bronze_offload` Glue job (via a native S3 → EventBridge → Glue Workflow chain — see `eventbridge.tf`). The `source_to_bronze` job is still available via its `ON_DEMAND` trigger for manual re-runs.
 
 ```bash
 # Upload a test file to trigger the pipeline

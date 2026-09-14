@@ -1,7 +1,7 @@
-# Event-driven trigger — automatically runs source_to_bronze when a .csv
-# lands in the source bucket, via native S3 -> EventBridge -> Glue Workflow
-# integration. The manual ON_DEMAND trigger in glue.tf is left untouched
-# for ad-hoc re-runs.
+# Event-driven trigger — automatically runs source_to_bronze_offload when a
+# .csv lands in the source bucket, via native S3 -> EventBridge -> Glue
+# Workflow integration. The source_to_bronze job keeps its manual ON_DEMAND
+# trigger in glue.tf for ad-hoc re-runs.
 
 # 1. Enable EventBridge notifications on the source bucket (native S3
 #    integration — no CloudTrail trail required).
@@ -14,7 +14,7 @@ resource "aws_s3_bucket_notification" "source_eventbridge" {
 #    can only target a Glue Workflow ARN, not a trigger or job ARN directly.
 resource "aws_glue_workflow" "source_to_bronze" {
   name        = "${var.project_name}-source-to-bronze-workflow"
-  description = "Event-driven wrapper - starts source_to_bronze job when a CSV lands in the source bucket"
+  description = "Event-driven wrapper - starts source_to_bronze_offload job when a CSV lands in the source bucket"
 
   tags = {
     Project = var.project_name
@@ -36,7 +36,7 @@ resource "aws_glue_trigger" "source_to_bronze_on_upload" {
   enabled       = false
 
   actions {
-    job_name = aws_glue_job.source_to_bronze.name
+    job_name = aws_glue_job.source_to_bronze_offload.name
   }
 
   event_batching_condition {
