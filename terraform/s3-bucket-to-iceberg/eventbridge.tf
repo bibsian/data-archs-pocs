@@ -21,14 +21,19 @@ resource "aws_glue_workflow" "source_to_bronze" {
   }
 }
 
-# 3. EVENT-type trigger inside that workflow. Must be created with
-#    enabled = false — the Glue API rejects "start on create" for EVENT
-#    triggers. It gets activated by the null_resource below.
+# 3. EVENT-type trigger inside that workflow. Must be created (and stay)
+#    with enabled = false — unlike ON_DEMAND/SCHEDULED/CONDITIONAL triggers,
+#    EVENT triggers have no activate/deactivate lifecycle at all: the Glue
+#    API rejects StartTrigger/StopTrigger unconditionally for this type
+#    (see https://github.com/hashicorp/terraform-provider-aws/issues/49407).
+#    Once created in the CREATED state and wired to a workflow with an
+#    enabled EventBridge rule/target, it is already fully functional — no
+#    separate activation step is needed or possible.
 resource "aws_glue_trigger" "source_to_bronze_on_upload" {
   name          = "${var.project_name}-source-to-bronze-event-trigger"
   type          = "EVENT"
   workflow_name = aws_glue_workflow.source_to_bronze.name
-  enabled       = false # required on create; activated below via null_resource
+  enabled       = false
 
   actions {
     job_name = aws_glue_job.source_to_bronze.name
@@ -118,20 +123,4 @@ resource "aws_cloudwatch_event_target" "trigger_glue_workflow" {
   role_arn = aws_iam_role.eventbridge_to_glue.arn
 
   depends_on = [time_sleep.wait_for_eventbridge_role]
-}
-
-# 8. Activate the EVENT trigger in the same apply. The Glue API only allows
-#    creating it disabled (step 3); this flips it on afterward, consistent
-#    with this repo's existing CLI-based conventions (configure-sandbox.sh,
-#    tf-guard.sh).
-resource "null_resource" "activate_event_trigger" {
-  triggers = {
-    trigger_name = aws_glue_trigger.source_to_bronze_on_upload.name
-  }
-
-  provisioner "local-exec" {
-    command = "aws glue start-trigger --name ${aws_glue_trigger.source_to_bronze_on_upload.name} --profile pluralsight --region ${var.aws_region}"
-  }
-
-  depends_on = [aws_glue_trigger.source_to_bronze_on_upload]
 }
