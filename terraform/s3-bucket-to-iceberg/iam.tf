@@ -66,6 +66,21 @@ data "aws_iam_policy_document" "glue_job" {
     ]
   }
 
+  # Read and write offloaded `terms` text objects (claim-check pattern)
+  statement {
+    sid    = "ReadWriteTerms"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      aws_s3_bucket.terms.arn,
+      "${aws_s3_bucket.terms.arn}/*",
+    ]
+  }
+
   # Manage Iceberg table metadata in the Glue catalog
   statement {
     sid    = "GlueCatalog"

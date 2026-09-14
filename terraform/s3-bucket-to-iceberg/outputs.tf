@@ -28,8 +28,18 @@ output "athena_results_bucket" {
   value       = aws_s3_bucket.athena_results.bucket
 }
 
+output "terms_bucket_name" {
+  description = "Terms S3 bucket — offloaded `terms` text objects (terms/{id}.txt) live here"
+  value       = aws_s3_bucket.terms.bucket
+}
+
+output "glue_offload_job_name" {
+  description = "Name of the Glue ETL job that offloads `terms` text and writes pointer rows to Iceberg"
+  value       = aws_glue_job.source_to_bronze_offload.name
+}
+
 output "glue_workflow_name" {
-  description = "Glue workflow that runs automatically when a .csv lands in the source bucket"
+  description = "Glue workflow that runs automatically when a .csv lands in the source bucket — starts both source_to_bronze and source_to_bronze_offload"
   value       = aws_glue_workflow.source_to_bronze.name
 }
 
