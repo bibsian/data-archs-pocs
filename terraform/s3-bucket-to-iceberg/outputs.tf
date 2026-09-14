@@ -27,3 +27,13 @@ output "athena_results_bucket" {
   description = "S3 bucket where Athena writes query result files"
   value       = aws_s3_bucket.athena_results.bucket
 }
+
+output "glue_workflow_name" {
+  description = "Glue workflow that runs automatically when a .csv lands in the source bucket"
+  value       = aws_glue_workflow.source_to_bronze.name
+}
+
+output "eventbridge_rule_name" {
+  description = "EventBridge rule watching the source bucket for new .csv uploads"
+  value       = aws_cloudwatch_event_rule.source_csv_uploaded.name
+}
