@@ -39,7 +39,7 @@ output "glue_offload_job_name" {
 }
 
 output "glue_workflow_name" {
-  description = "Glue workflow that runs automatically when a .csv lands in the source bucket — starts both source_to_bronze and source_to_bronze_offload"
+  description = "Glue workflow that runs automatically when a .csv lands in the source bucket — starts source_to_bronze_offload"
   value       = aws_glue_workflow.source_to_bronze.name
 }
 
