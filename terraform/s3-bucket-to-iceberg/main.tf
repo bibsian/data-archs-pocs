@@ -12,13 +12,14 @@ provider "aws" {
   region  = var.aws_region
 }
 
-# Example: S3 bucket
-resource "aws_s3_bucket" "example" {
-  bucket = "${var.project_name}-${random_id.suffix.hex}"
+# Source bucket — drop raw CSV files here to trigger the ETL pipeline
+resource "aws_s3_bucket" "source" {
+  bucket = "${var.project_name}-source-${random_id.suffix.hex}"
 
   tags = {
     Project     = var.project_name
     Environment = "sandbox"
+    Layer       = "source"
   }
 }
 

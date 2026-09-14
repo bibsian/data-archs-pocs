@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pluralsight AWS Sandbox"
+  short_description: "Prepare a Pluralsight AWS sandbox"
+  default_prompt: "Use $pluralsight-aws-sandbox to prepare my AWS sandbox through CLI configuration, then stop before Verify."

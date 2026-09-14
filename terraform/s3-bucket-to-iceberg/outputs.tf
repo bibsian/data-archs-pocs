@@ -1,0 +1,29 @@
+output "source_bucket_name" {
+  description = "Source S3 bucket — drop CSV files here"
+  value       = aws_s3_bucket.source.bucket
+}
+
+output "bronze_bucket_name" {
+  description = "Bronze S3 bucket — Iceberg tables written here after ETL"
+  value       = aws_s3_bucket.bronze.bucket
+}
+
+output "glue_job_name" {
+  description = "Name of the Glue ETL job (source → bronze)"
+  value       = aws_glue_job.source_to_bronze.name
+}
+
+output "glue_catalog_database" {
+  description = "Glue catalog database name — query tables here via Athena"
+  value       = aws_glue_catalog_database.lake.name
+}
+
+output "athena_workgroup" {
+  description = "Athena workgroup name — select this in the console before running queries"
+  value       = aws_athena_workgroup.main.name
+}
+
+output "athena_results_bucket" {
+  description = "S3 bucket where Athena writes query result files"
+  value       = aws_s3_bucket.athena_results.bucket
+}
