@@ -27,3 +27,9 @@ variable "table_name" {
   type        = string
   default     = "raw_data"
 }
+
+variable "offload_table_name" {
+  description = "Name of the Iceberg table created by the terms-offload job (terms column replaced with s3:// pointers)"
+  type        = string
+  default     = "raw_data_with_pointers"
+}

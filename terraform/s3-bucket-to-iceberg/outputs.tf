@@ -27,3 +27,13 @@ output "athena_results_bucket" {
   description = "S3 bucket where Athena writes query result files"
   value       = aws_s3_bucket.athena_results.bucket
 }
+
+output "terms_bucket_name" {
+  description = "Terms S3 bucket — offloaded `terms` text objects (terms/{id}.txt) live here"
+  value       = aws_s3_bucket.terms.bucket
+}
+
+output "glue_offload_job_name" {
+  description = "Name of the Glue ETL job that offloads `terms` text and writes pointer rows to Iceberg"
+  value       = aws_glue_job.source_to_bronze_offload.name
+}
