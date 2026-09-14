@@ -1,6 +1,6 @@
-# AWS Tinker
+# data-archs
 
-Tinkering repo for AWS using Pluralsight cloud sandboxes.
+Experimentation repo for AWS using Pluralsight cloud sandboxes.
 
 ## Prerequisites
 
@@ -47,51 +47,33 @@ This saves credentials to the `pluralsight` AWS profile. Nothing is committed to
 aws sts get-caller-identity --profile pluralsight
 ```
 
+### 4. Clean up stale state (if any)
+
+```bash
+bash scripts/tf-guard.sh
+```
+
+Each new sandbox session spins up a brand-new AWS account. This scans every project under `terraform/` and archives any local state left over from a previous (now-defunct) sandbox account, so `terraform plan`/`apply` won't hit cross-account `AccessDenied` errors.
+
 ---
 
 ## Terraform
 
 ```bash
-cd terraform/s3-bucket
+cd terraform/<_terraform_proejcts_>
 
 # First time only
 terraform init
 
 # Preview changes
-terraform plan -var="project_name=aws-learn"
+terraform plan -var="project_name=data-archs"
 
 # Deploy
-terraform apply -var="project_name=aws-learn"
+terraform apply -var="project_name=data-archs"
 
 # Tear down (important — sandbox resources may persist billing)
 terraform destroy
 ```
-
----
-
-## Serverless (Python + Lambda + API Gateway)
-
-```bash
-cd serverless/hello-api
-
-# Build
-sam build
-
-# Deploy (first time — walks you through guided setup)
-sam deploy --profile pluralsight --guided
-
-# Deploy (subsequent times)
-sam deploy --profile pluralsight
-
-# Test locally (requires Docker)
-sam local start-api
-# Then: curl http://localhost:3000/hello
-
-# Invoke function directly
-sam local invoke HelloFunction
-```
-
----
 
 ## Project structure
 
@@ -101,16 +83,13 @@ To add a new project, create a new subdirectory (e.g. `terraform/vpc/` or `serve
 ```
 aws_learn/
 ├── scripts/
-│   └── configure-sandbox.sh       # Set sandbox credentials each session
+│   ├── configure-sandbox.sh       # Set sandbox credentials each session
+│   └── tf-guard.sh                # Archive stale state from a previous sandbox account
 ├── terraform/
-│   └── s3-bucket/                 # Project: S3 bucket example
+│   └── s3-bucket-to-iceberg/                 # Project: S3 bucket example
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
-└── serverless/
-    └── hello-api/                 # Project: Python Lambda + API Gateway
-        ├── template.yaml
-        ├── requirements.txt
-        └── src/
-            └── handler.py
+│       └── scripts/
+│           └── source_to_bronze.py # EMR job to pickup files from s3 and convert to icerberg
 ```
