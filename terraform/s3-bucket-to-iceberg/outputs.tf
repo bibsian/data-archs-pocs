@@ -37,3 +37,13 @@ output "glue_offload_job_name" {
   description = "Name of the Glue ETL job that offloads `terms` text and writes pointer rows to Iceberg"
   value       = aws_glue_job.source_to_bronze_offload.name
 }
+
+output "glue_workflow_name" {
+  description = "Glue workflow that runs automatically when a .csv lands in the source bucket — starts both source_to_bronze and source_to_bronze_offload"
+  value       = aws_glue_workflow.source_to_bronze.name
+}
+
+output "eventbridge_rule_name" {
+  description = "EventBridge rule watching the source bucket for new .csv uploads"
+  value       = aws_cloudwatch_event_rule.source_csv_uploaded.name
+}

@@ -75,6 +75,20 @@ terraform apply -var="project_name=data-archs"
 terraform destroy
 ```
 
+### `s3-bucket-to-iceberg` — automatic trigger
+
+Uploading a `.csv` to the source bucket automatically kicks off the `source_to_bronze` Glue job (via a native S3 → EventBridge → Glue Workflow chain — see `eventbridge.tf`). The original `ON_DEMAND` trigger is still available for manual re-runs.
+
+```bash
+# Upload a test file to trigger the pipeline
+aws s3 cp sample.csv s3://<source_bucket_name>/ --profile pluralsight
+
+# Check for a new workflow run
+aws glue get-workflow-runs --name <glue_workflow_name> --profile pluralsight
+```
+
+The bucket/workflow names are printed as Terraform outputs (`source_bucket_name`, `glue_workflow_name`) after `apply`.
+
 ## Project structure
 
 Each IaC framework has its own folder, with individual projects as subdirectories.
@@ -89,7 +103,8 @@ aws_learn/
 │   └── s3-bucket-to-iceberg/                 # Project: S3 bucket example
 │       ├── main.tf
 │       ├── variables.tf
-│       └── outputs.tf
+│       ├── outputs.tf
+│       ├── eventbridge.tf          # S3 -> EventBridge -> Glue Workflow auto-trigger
 │       └── scripts/
 │           └── source_to_bronze.py # EMR job to pickup files from s3 and convert to icerberg
 ```
