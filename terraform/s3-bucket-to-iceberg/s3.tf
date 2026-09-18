@@ -33,6 +33,42 @@ resource "aws_s3_bucket_public_access_block" "bronze" {
   restrict_public_buckets = true
 }
 
+# Silver bucket — validated Iceberg tables (and their quarantine counterparts)
+# written here by the bronze_to_silver Glue ETL job
+resource "aws_s3_bucket" "silver" {
+  bucket = "${var.project_name}-silver-${random_id.suffix.hex}"
+
+  tags = {
+    Project     = var.project_name
+    Environment = "sandbox"
+    Layer       = "silver"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "silver" {
+  bucket = aws_s3_bucket.silver.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "silver" {
+  bucket = aws_s3_bucket.silver.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "silver" {
+  bucket                  = aws_s3_bucket.silver.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
 # Athena query results bucket — Athena writes query output here before returning results
 resource "aws_s3_bucket" "athena_results" {
   bucket = "${var.project_name}-athena-results-${random_id.suffix.hex}"

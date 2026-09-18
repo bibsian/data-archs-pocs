@@ -39,8 +39,23 @@ output "glue_offload_job_name" {
 }
 
 output "glue_workflow_name" {
-  description = "Glue workflow that runs automatically when a .csv lands in the source bucket — starts source_to_bronze_offload"
+  description = "Glue workflow that runs automatically when a .csv lands in the source bucket — chains source_to_bronze_offload -> bronze_to_silver -> silver_to_gold"
   value       = aws_glue_workflow.source_to_bronze.name
+}
+
+output "silver_bucket_name" {
+  description = "Silver S3 bucket — validated (and quarantined) Iceberg tables written here by bronze_to_silver"
+  value       = aws_s3_bucket.silver.bucket
+}
+
+output "glue_silver_job_name" {
+  description = "Name of the Glue ETL job that validates bronze data and writes silver/quarantine Iceberg tables"
+  value       = aws_glue_job.bronze_to_silver.name
+}
+
+output "glue_gold_job_name" {
+  description = "Name of the Glue Python Shell job that copies the silver Iceberg table into the native Redshift gold schema"
+  value       = aws_glue_job.silver_to_gold.name
 }
 
 output "eventbridge_rule_name" {
@@ -76,4 +91,24 @@ output "redshift_database_name" {
 output "redshift_offload_table" {
   description = "Redshift query target for the offload Iceberg table after its first Glue job run"
   value       = "${var.redshift_external_schema_name}.${var.offload_table_name}"
+}
+
+output "redshift_silver_table" {
+  description = "Redshift query target for the silver Iceberg table (via Spectrum) after the bronze_to_silver job runs"
+  value       = "${var.redshift_external_schema_name}.${var.silver_table_name}"
+}
+
+output "redshift_silver_quarantine_table" {
+  description = "Redshift query target for rows that failed DQ checks (via Spectrum) after the bronze_to_silver job runs"
+  value       = "${var.redshift_external_schema_name}.${var.silver_quarantine_table_name}"
+}
+
+output "redshift_gold_schema" {
+  description = "Native Redshift schema populated by the silver_to_gold job"
+  value       = var.gold_schema_name
+}
+
+output "redshift_gold_table" {
+  description = "Redshift query target for the native gold table after the silver_to_gold job runs"
+  value       = "${var.gold_schema_name}.${var.gold_table_name}"
 }

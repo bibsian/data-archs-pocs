@@ -116,3 +116,16 @@ resource "aws_redshiftdata_statement" "create_lake_external_schema" {
     aws_glue_catalog_database.lake,
   ]
 }
+
+# Native Redshift schema for the gold layer. Unlike lake_external, this is
+# regular Redshift-managed storage — the silver_to_gold Glue job copies data
+# into it with CREATE TABLE AS SELECT ... FROM lake_external.<silver_table>.
+# Created once here; the job itself only creates/replaces tables within it.
+resource "aws_redshiftdata_statement" "create_gold_schema" {
+  cluster_identifier = aws_redshift_cluster.spectrum.cluster_identifier
+  database           = aws_redshift_cluster.spectrum.database_name
+  secret_arn         = aws_redshift_cluster.spectrum.master_password_secret_arn
+  statement_name     = "${var.project_name}-create-gold-schema"
+
+  sql = "CREATE SCHEMA IF NOT EXISTS ${var.gold_schema_name};"
+}
