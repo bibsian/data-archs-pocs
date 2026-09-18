@@ -124,3 +124,54 @@ resource "aws_cloudwatch_event_target" "trigger_glue_workflow" {
 
   depends_on = [time_sleep.wait_for_eventbridge_role]
 }
+
+# 8. Medallion chaining — CONDITIONAL triggers extend the same workflow so
+#    the full bronze -> silver -> gold pipeline runs automatically for every
+#    CSV upload, with no extra EventBridge rules needed. Unlike the EVENT
+#    trigger above, CONDITIONAL triggers do support start/stop; setting
+#    start_on_creation = true activates them immediately on `apply`.
+resource "aws_glue_trigger" "start_silver_on_bronze_success" {
+  name          = "${var.project_name}-start-silver-on-bronze-success"
+  type          = "CONDITIONAL"
+  workflow_name = aws_glue_workflow.source_to_bronze.name
+
+  start_on_creation = true
+
+  predicate {
+    conditions {
+      job_name = aws_glue_job.source_to_bronze_offload.name
+      state    = "SUCCEEDED"
+    }
+  }
+
+  actions {
+    job_name = aws_glue_job.bronze_to_silver.name
+  }
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
+resource "aws_glue_trigger" "start_gold_on_silver_success" {
+  name          = "${var.project_name}-start-gold-on-silver-success"
+  type          = "CONDITIONAL"
+  workflow_name = aws_glue_workflow.source_to_bronze.name
+
+  start_on_creation = true
+
+  predicate {
+    conditions {
+      job_name = aws_glue_job.bronze_to_silver.name
+      state    = "SUCCEEDED"
+    }
+  }
+
+  actions {
+    job_name = aws_glue_job.silver_to_gold.name
+  }
+
+  tags = {
+    Project = var.project_name
+  }
+}
