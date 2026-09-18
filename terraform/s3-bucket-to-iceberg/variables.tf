@@ -33,3 +33,27 @@ variable "offload_table_name" {
   type        = string
   default     = "raw_data_with_pointers"
 }
+
+variable "redshift_database_name" {
+  description = "Database created in the provisioned Redshift cluster"
+  type        = string
+  default     = "dev"
+}
+
+variable "redshift_master_username" {
+  description = "Redshift administrator username; its password is managed by AWS Secrets Manager"
+  type        = string
+  default     = "admin"
+}
+
+variable "redshift_node_type" {
+  description = "Provisioned Redshift node type; ra3.large is the selected private single-node sandbox baseline"
+  type        = string
+  default     = "ra3.large"
+}
+
+variable "redshift_external_schema_name" {
+  description = "Redshift external schema that maps to the Glue lake database"
+  type        = string
+  default     = "lake_external"
+}

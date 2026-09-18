@@ -89,6 +89,31 @@ aws glue get-workflow-runs --name <glue_workflow_name> --profile pluralsight
 
 The bucket/workflow names are printed as Terraform outputs (`source_bucket_name`, `glue_workflow_name`) after `apply`.
 
+### Query the offload Iceberg table from Redshift
+
+This project provisions a private, single-node Redshift `ra3.large` cluster.
+It is administered through the Redshift Data API, so no inbound network access
+or desktop SQL client is required. Terraform creates `lake_external`, an
+external schema that maps to the project's Glue catalog database.
+
+That Glue database is shared by both bronze jobs, so Redshift discovers both
+`raw_data` and `raw_data_with_pointers`. For the EventBridge-triggered offload
+pipeline, query `raw_data_with_pointers` after its first successful workflow
+run.
+
+```bash
+cd terraform/s3-bucket-to-iceberg
+
+aws redshift-data execute-statement \
+  --cluster-identifier "$(terraform output -raw redshift_cluster_identifier)" \
+  --database "$(terraform output -raw redshift_database_name)" \
+  --secret-arn "$(terraform output -raw redshift_admin_secret_arn)" \
+  --sql "SELECT * FROM $(terraform output -raw redshift_offload_table) LIMIT 10" \
+  --profile pluralsight
+```
+
+The command returns an `Id`. Inspect it with `aws redshift-data describe-statement --id <Id> --profile pluralsight`, then retrieve rows with `aws redshift-data get-statement-result --id <Id> --profile pluralsight`.
+
 ## Project structure
 
 Each IaC framework has its own folder, with individual projects as subdirectories.

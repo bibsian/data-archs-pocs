@@ -47,3 +47,33 @@ output "eventbridge_rule_name" {
   description = "EventBridge rule watching the source bucket for new .csv uploads"
   value       = aws_cloudwatch_event_rule.source_csv_uploaded.name
 }
+
+output "redshift_cluster_identifier" {
+  description = "Provisioned private Redshift cluster identifier; use with the Redshift Data API"
+  value       = aws_redshift_cluster.spectrum.cluster_identifier
+}
+
+output "redshift_cluster_endpoint" {
+  description = "Private Redshift cluster endpoint"
+  value       = aws_redshift_cluster.spectrum.endpoint
+}
+
+output "redshift_admin_secret_arn" {
+  description = "AWS-managed Redshift administrator credential ARN for Redshift Data API requests"
+  value       = aws_redshift_cluster.spectrum.master_password_secret_arn
+}
+
+output "redshift_external_schema" {
+  description = "Redshift Spectrum schema backed by the Glue lake database"
+  value       = var.redshift_external_schema_name
+}
+
+output "redshift_database_name" {
+  description = "Redshift database used by the Data API and external schema"
+  value       = aws_redshift_cluster.spectrum.database_name
+}
+
+output "redshift_offload_table" {
+  description = "Redshift query target for the offload Iceberg table after its first Glue job run"
+  value       = "${var.redshift_external_schema_name}.${var.offload_table_name}"
+}

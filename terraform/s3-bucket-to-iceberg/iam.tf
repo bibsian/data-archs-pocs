@@ -121,3 +121,71 @@ resource "aws_iam_role_policy" "glue_job" {
   role   = aws_iam_role.glue_job.id
   policy = data.aws_iam_policy_document.glue_job.json
 }
+
+# Redshift assumes this role to read Iceberg metadata from the Glue catalog and
+# data/metadata files from the bronze bucket through Redshift Spectrum.
+data "aws_iam_policy_document" "redshift_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["redshift.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "redshift_spectrum" {
+  name               = "${var.project_name}-redshift-spectrum"
+  assume_role_policy = data.aws_iam_policy_document.redshift_assume.json
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
+data "aws_iam_policy_document" "redshift_spectrum" {
+  statement {
+    sid    = "ReadBronzeIcebergFiles"
+    effect = "Allow"
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+    ]
+    resources = [aws_s3_bucket.bronze.arn]
+  }
+
+  statement {
+    sid       = "ReadBronzeIcebergObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.bronze.arn}/*"]
+  }
+
+  statement {
+    sid    = "ReadGlueCatalog"
+    effect = "Allow"
+    actions = [
+      "glue:BatchGetPartition",
+      "glue:GetDatabase",
+      "glue:GetDatabases",
+      "glue:GetPartition",
+      "glue:GetPartitions",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:GetTableVersion",
+      "glue:GetTableVersions",
+    ]
+    resources = [
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.lake.name}",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.lake.name}/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "redshift_spectrum" {
+  name   = "redshift-spectrum-read-lake"
+  role   = aws_iam_role.redshift_spectrum.id
+  policy = data.aws_iam_policy_document.redshift_spectrum.json
+}
