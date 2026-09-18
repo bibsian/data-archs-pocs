@@ -47,6 +47,21 @@ resource "aws_security_group" "redshift" {
   }
 }
 
+# Create Redshift's service-linked role ourselves instead of letting
+# CreateCluster create it implicitly. Implicit creation races IAM
+# propagation on a fresh account and can fail with "InvalidParameterValue:
+# Unable to assume the SLR on the customer account".
+resource "aws_iam_service_linked_role" "redshift" {
+  aws_service_name = "redshift.amazonaws.com"
+}
+
+# IAM propagation buffer, matching the pattern already used for the
+# EventBridge-to-Glue role in eventbridge.tf.
+resource "time_sleep" "wait_for_redshift_slr" {
+  depends_on      = [aws_iam_service_linked_role.redshift]
+  create_duration = "30s"
+}
+
 resource "aws_redshift_cluster" "spectrum" {
   cluster_identifier = "${var.project_name}-redshift-${random_id.suffix.hex}"
   cluster_type       = "single-node"
@@ -75,6 +90,8 @@ resource "aws_redshift_cluster" "spectrum" {
     Project     = var.project_name
     Environment = "sandbox"
   }
+
+  depends_on = [time_sleep.wait_for_redshift_slr]
 }
 
 # The Glue database exists before any Glue job run. The external schema can be
