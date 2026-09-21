@@ -1,0 +1,9 @@
+{
+  "//": "Data-quality rules for the bronze -> silver job. Add/remove checks here without touching bronze_to_silver.py or dq_checks.py. `type` must match a key in dq_checks.CHECK_REGISTRY.",
+  "checks": [
+    {
+      "type": "not_null",
+      "columns": ["id", "terms"]
+    }
+  ]
+}

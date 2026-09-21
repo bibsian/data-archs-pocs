@@ -14,9 +14,9 @@ each blob is written once to S3 and the row keeps a lightweight pointer to
 it. Consumers dereference the pointer only when they actually need the
 full text.
 
-This script is additive: it does not touch the original source_to_bronze.py
-job, table, or trigger. It reads the same source bucket but writes to a
-separate Iceberg table so the two pipelines don't collide.
+This is the sole bronze entry point for the pipeline: it reads the source
+bucket, writes `raw_data_with_pointers` as Iceberg, and feeds the silver
+(bronze_to_silver.py) and gold (silver_to_gold.py) jobs downstream.
 
 How Glue jobs work (quick primer):
   - AWS Glue runs this script on a managed Spark cluster — you don't manage servers.

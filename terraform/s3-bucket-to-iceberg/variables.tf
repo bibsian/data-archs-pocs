@@ -22,16 +22,34 @@ variable "num_workers" {
   default     = 2
 }
 
-variable "table_name" {
-  description = "Name of the Iceberg table created in the bronze layer"
-  type        = string
-  default     = "raw_data"
-}
-
 variable "offload_table_name" {
   description = "Name of the Iceberg table created by the terms-offload job (terms column replaced with s3:// pointers)"
   type        = string
   default     = "raw_data_with_pointers"
+}
+
+variable "silver_table_name" {
+  description = "Name of the Iceberg table created in the silver layer for rows that pass all DQ checks"
+  type        = string
+  default     = "silver_data"
+}
+
+variable "silver_quarantine_table_name" {
+  description = "Name of the Iceberg table created in the silver layer for rows that fail one or more DQ checks"
+  type        = string
+  default     = "silver_data_quarantine"
+}
+
+variable "gold_schema_name" {
+  description = "Native Redshift schema that the gold layer copies silver data into"
+  type        = string
+  default     = "gold"
+}
+
+variable "gold_table_name" {
+  description = "Name of the native Redshift table created in the gold schema"
+  type        = string
+  default     = "gold_data"
 }
 
 variable "redshift_database_name" {

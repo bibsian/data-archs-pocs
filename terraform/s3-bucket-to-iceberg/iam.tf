@@ -81,6 +81,47 @@ data "aws_iam_policy_document" "glue_job" {
     ]
   }
 
+  # Read and write Iceberg table data to the silver bucket (bronze_to_silver job)
+  statement {
+    sid    = "ReadWriteSilver"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      aws_s3_bucket.silver.arn,
+      "${aws_s3_bucket.silver.arn}/*",
+    ]
+  }
+
+  # silver_to_gold runs SQL against the Redshift cluster through the
+  # Redshift Data API instead of a direct JDBC connection — no network
+  # access to the private cluster is required.
+  statement {
+    sid    = "RedshiftDataApiForGold"
+    effect = "Allow"
+    actions = [
+      "redshift-data:BatchExecuteStatement",
+      "redshift-data:ExecuteStatement",
+      "redshift-data:DescribeStatement",
+      "redshift-data:GetStatementResult",
+    ]
+    # The Data API does not support resource-level restrictions on these actions.
+    resources = ["*"]
+  }
+
+  # The Data API needs the calling role to be able to read the admin secret
+  # it authenticates with on the caller's behalf.
+  statement {
+    sid       = "ReadRedshiftAdminSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_redshift_cluster.spectrum.master_password_secret_arn]
+  }
+
   # Manage Iceberg table metadata in the Glue catalog
   statement {
     sid    = "GlueCatalog"
@@ -160,6 +201,26 @@ data "aws_iam_policy_document" "redshift_spectrum" {
     effect    = "Allow"
     actions   = ["s3:GetObject"]
     resources = ["${aws_s3_bucket.bronze.arn}/*"]
+  }
+
+  # The silver_to_gold job's CTAS reads lake_external.silver_data through
+  # this role — without these, Redshift can resolve the Iceberg table's
+  # metadata via Glue but can't read its underlying S3 data/metadata files.
+  statement {
+    sid    = "ReadSilverIcebergFiles"
+    effect = "Allow"
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+    ]
+    resources = [aws_s3_bucket.silver.arn]
+  }
+
+  statement {
+    sid       = "ReadSilverIcebergObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.silver.arn}/*"]
   }
 
   statement {
