@@ -203,6 +203,26 @@ data "aws_iam_policy_document" "redshift_spectrum" {
     resources = ["${aws_s3_bucket.bronze.arn}/*"]
   }
 
+  # The silver_to_gold job's CTAS reads lake_external.silver_data through
+  # this role — without these, Redshift can resolve the Iceberg table's
+  # metadata via Glue but can't read its underlying S3 data/metadata files.
+  statement {
+    sid    = "ReadSilverIcebergFiles"
+    effect = "Allow"
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+    ]
+    resources = [aws_s3_bucket.silver.arn]
+  }
+
+  statement {
+    sid       = "ReadSilverIcebergObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.silver.arn}/*"]
+  }
+
   statement {
     sid    = "ReadGlueCatalog"
     effect = "Allow"
