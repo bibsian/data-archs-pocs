@@ -8,11 +8,6 @@ output "bronze_bucket_name" {
   value       = aws_s3_bucket.bronze.bucket
 }
 
-output "glue_job_name" {
-  description = "Name of the Glue ETL job (source → bronze)"
-  value       = aws_glue_job.source_to_bronze.name
-}
-
 output "glue_catalog_database" {
   description = "Glue catalog database name — query tables here via Athena"
   value       = aws_glue_catalog_database.lake.name

@@ -83,7 +83,7 @@ Uploading a `.csv` to the source bucket automatically kicks off the full medalli
 2. **Silver** — once bronze `SUCCEEDED`, a `CONDITIONAL` trigger starts `bronze_to_silver`, which runs the configurable DQ checks in `scripts/config/dq_rules.json` (implemented in `scripts/dq_checks.py`) and splits the result into `silver_data` (passed) and `silver_data_quarantine` (failed) Iceberg tables.
 3. **Gold** — once silver `SUCCEEDED`, another `CONDITIONAL` trigger starts `silver_to_gold`, a lightweight Glue Python Shell job that runs `DROP TABLE` + `CREATE TABLE AS SELECT` through the Redshift Data API, copying `silver_data` into the native `gold.gold_data` table.
 
-The original `source_to_bronze` job (writing `raw_data`) is unchanged and still only available via its `ON_DEMAND` trigger for manual re-runs — it has no silver/gold pipeline.
+`source_to_bronze_offload` is the sole bronze entry point — the standalone `source_to_bronze` job/`raw_data` table has been removed; every CSV upload now flows straight through bronze → silver → gold.
 
 ```bash
 # Upload a test file to trigger the pipeline
@@ -117,10 +117,10 @@ or desktop SQL client is required. Terraform creates `lake_external`, an
 external schema that maps to the project's Glue catalog database.
 
 That Glue database is shared by the bronze and silver jobs, so Redshift
-discovers `raw_data`, `raw_data_with_pointers`, `silver_data`, and
-`silver_data_quarantine` through `lake_external` as soon as each job has run
-at least once. `gold.gold_data` is different: it's a native Redshift table
-(not Spectrum) that `silver_to_gold` populates via `CREATE TABLE AS SELECT`.
+discovers `raw_data_with_pointers`, `silver_data`, and `silver_data_quarantine`
+through `lake_external` as soon as each job has run at least once.
+`gold.gold_data` is different: it's a native Redshift table (not Spectrum)
+that `silver_to_gold` populates via `CREATE TABLE AS SELECT`.
 
 ```bash
 cd terraform/s3-bucket-to-iceberg
@@ -172,7 +172,6 @@ aws_learn/
 │       ├── glue.tf                 # Glue jobs/triggers for bronze, silver, and gold
 │       ├── redshift.tf             # Redshift cluster, lake_external schema, gold schema
 │       └── scripts/
-│           ├── source_to_bronze.py         # CSV -> bronze Iceberg (raw_data)
 │           ├── source_to_bronze_offload.py # CSV -> bronze Iceberg w/ terms claim-check (raw_data_with_pointers)
 │           ├── dq_checks.py                # Extensible DQCheck framework + CHECK_REGISTRY
 │           ├── config/

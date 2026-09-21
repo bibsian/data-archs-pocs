@@ -22,12 +22,6 @@ variable "num_workers" {
   default     = 2
 }
 
-variable "table_name" {
-  description = "Name of the Iceberg table created in the bronze layer"
-  type        = string
-  default     = "raw_data"
-}
-
 variable "offload_table_name" {
   description = "Name of the Iceberg table created by the terms-offload job (terms column replaced with s3:// pointers)"
   type        = string
