@@ -75,7 +75,7 @@ terraform apply -var="project_name=data-archs"
 terraform destroy
 ```
 
-### `s3-bucket-to-iceberg` — automatic trigger
+### `medallion-fulltext-udf` — automatic trigger
 
 Uploading a `.csv` to the source bucket automatically kicks off the full medallion pipeline — bronze → silver → gold — via a single Glue Workflow (see `eventbridge.tf`):
 
@@ -123,7 +123,7 @@ through `lake_external` as soon as each job has run at least once.
 that `silver_to_gold` populates via `CREATE TABLE AS SELECT`.
 
 ```bash
-cd terraform/s3-bucket-to-iceberg
+cd terraform/medallion-fulltext-udf
 
 # Bronze/silver — read through Spectrum
 aws redshift-data execute-statement \
@@ -152,6 +152,25 @@ aws redshift-data execute-statement \
 
 Each command returns an `Id`. Inspect it with `aws redshift-data describe-statement --id <Id> --profile pluralsight`, then retrieve rows with `aws redshift-data get-statement-result --id <Id> --profile pluralsight`.
 
+### Query full text via the Lambda UDF
+
+`gold.gold_data.terms` holds an `s3://` pointer, not the offloaded text itself (the claim-check pattern — see above). To read the actual text inline in SQL, `terraform apply` also registers a Redshift external function, `gold.get_text_from_s3(s3_uri)`, backed by a small Lambda (`get-text-from-s3`) that fetches one object from the terms bucket per call:
+
+```sql
+-- Recommended pattern: filter to a handful of known documents first, then
+-- dereference the pointer only for those rows.
+SELECT id, terms, gold.get_text_from_s3(terms) AS full_text
+FROM gold.gold_data
+WHERE id IN ('1', '2', '3');
+```
+
+This is for **single/few-record inline retrieval only, not bulk export** — every row triggers its own Lambda invocation. Two guardrails are built into the Lambda itself (`scripts/get_text_from_s3/handler.py`), so a query that fans out too wide gets a clear message in the result cell instead of a slow/silent failure:
+
+- **Batch-row-count cap** (`text_udf_max_batch_rows`, default 100) — if a single invocation batch has more rows than this, every row in it gets `"Too many documents requested in a single query - limit your query to 100 documents or fewer for inline retrieval."` instead of its text.
+- **Per-object size cap** (`text_udf_max_object_bytes`, default 60,000 bytes — safely under Redshift's 65,535-byte VARCHAR limit) — if a fetched object is larger than this, that row gets `"Document too large for inline retrieval (<size> bytes) - limit your query to 100 documents or less."` instead of its text.
+
+Both are configurable via Terraform variables (`text_udf_max_batch_rows`, `text_udf_max_object_bytes`) and passed to the Lambda as environment variables. Other per-row failures (missing object, access denied, malformed `s3_uri`) also return a human-readable message rather than failing the whole query — see the function names/ARNs in Terraform outputs (`text_udf_lambda_function_name`, `redshift_get_text_from_s3_function`, etc.) for quick reference or Redshift Data API testing.
+
 ## Project structure
 
 Each IaC framework has its own folder, with individual projects as subdirectories.
@@ -163,7 +182,7 @@ aws_learn/
 │   ├── configure-sandbox.sh       # Set sandbox credentials each session
 │   └── tf-guard.sh                # Archive stale state from a previous sandbox account
 ├── terraform/
-│   └── s3-bucket-to-iceberg/                 # Project: S3 bucket example
+│   └── medallion-fulltext-udf/                # Project: medallion pipeline + guardrailed full-text Lambda UDF
 │       ├── main.tf
 │       ├── variables.tf
 │       ├── outputs.tf
@@ -171,11 +190,14 @@ aws_learn/
 │       │                           # plus CONDITIONAL triggers chaining bronze -> silver -> gold
 │       ├── glue.tf                 # Glue jobs/triggers for bronze, silver, and gold
 │       ├── redshift.tf             # Redshift cluster, lake_external schema, gold schema
+│       ├── lambda_text_udf.tf      # get-text-from-s3 Lambda + IAM roles + gold.get_text_from_s3 external function
 │       └── scripts/
 │           ├── source_to_bronze_offload.py # CSV -> bronze Iceberg w/ terms claim-check (raw_data_with_pointers)
 │           ├── dq_checks.py                # Extensible DQCheck framework + CHECK_REGISTRY
 │           ├── config/
 │           │   └── dq_rules.json           # Declarative DQ rule config (which checks, which columns)
 │           ├── bronze_to_silver.py          # bronze Iceberg -> silver + silver_quarantine Iceberg
-│           └── silver_to_gold.py            # silver Iceberg -> native gold.gold_data (Redshift Data API)
+│           ├── silver_to_gold.py            # silver Iceberg -> native gold.gold_data (Redshift Data API)
+│           └── get_text_from_s3/
+│               └── handler.py               # Lambda behind gold.get_text_from_s3 (guardrailed inline text retrieval)
 ```
