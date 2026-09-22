@@ -192,8 +192,12 @@ resource "aws_redshiftdata_statement" "create_get_text_from_s3_function" {
     --   SELECT id, ${var.gold_schema_name}.get_text_from_s3(terms) AS full_text
     --   FROM ${var.gold_schema_name}.${var.gold_table_name}
     --   WHERE id IN ('1', '2', '3');
-    CREATE OR REPLACE EXTERNAL FUNCTION ${var.gold_schema_name}.get_text_from_s3(s3_uri VARCHAR)
-    RETURNS VARCHAR
+    -- VARCHAR(65535) is explicit on both sides: an unqualified VARCHAR
+    -- defaults to VARCHAR(256) in Redshift, which silently truncates any
+    -- document text longer than 256 bytes with "Value too long for
+    -- character type".
+    CREATE OR REPLACE EXTERNAL FUNCTION ${var.gold_schema_name}.get_text_from_s3(s3_uri VARCHAR(65535))
+    RETURNS VARCHAR(65535)
     STABLE
     LAMBDA '${aws_lambda_function.get_text_from_s3.function_name}'
     IAM_ROLE '${aws_iam_role.redshift_lambda_invoke.arn}';

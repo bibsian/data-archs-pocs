@@ -33,6 +33,16 @@ Redshift Lambda UDF invocation contract (per AWS docs):
     "error_msg": "..."} — this aborts the entire query, so it is reserved
     for malformed-request situations, not per-row problems.)
 
+    IMPORTANT: the handler must return this as a JSON-encoded *string*
+    (`json.dumps(response)`), not a raw Python dict. Returning a dict lets
+    the Lambda Python runtime auto-serialize it, which still produces
+    byte-for-byte identical JSON when invoked directly (e.g. via `aws
+    lambda invoke`) — but Redshift's external-function client expects the
+    invocation Payload to itself be a JSON string value, and rejects a
+    bare top-level JSON object with "Invalid format in external function
+    response: Empty format" (error code 32005), even though the Lambda
+    executed successfully and logged the correct content.
+
 Important: the protocol has no per-row error field. Per-row failures
 (missing object, access denied, malformed URI, oversized document) are
 represented by returning `success: true` and putting a human-readable
@@ -49,6 +59,7 @@ Two guardrails, both enforced here (see project README/plan for context):
      single oversized document regardless of batch size.
 """
 
+import json
 import os
 import re
 
@@ -122,18 +133,18 @@ def lambda_handler(event, context):
     # instead of triggering num_records separate S3 calls.
     if num_records > MAX_BATCH_ROWS:
         message = _too_many_rows_message()
-        return {
+        return json.dumps({
             "success": True,
             "num_records": num_records,
             "results": [message] * num_records,
-        }
+        })
 
     # Guardrail 2 (per-object size) is enforced inside _resolve_row, per row,
     # after the object is fetched.
     results = [_resolve_row(row[0] if row else None) for row in arguments]
 
-    return {
+    return json.dumps({
         "success": True,
         "num_records": num_records,
         "results": results,
-    }
+    })
