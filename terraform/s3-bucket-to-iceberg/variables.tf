@@ -75,3 +75,9 @@ variable "redshift_external_schema_name" {
   type        = string
   default     = "lake_external"
 }
+
+variable "terms_catalog_table_name" {
+  description = "Name of the Glue table that catalogs the offloaded `terms` text objects as structured rows (id, terms_text, s3_uri)"
+  type        = string
+  default     = "terms_text"
+}
