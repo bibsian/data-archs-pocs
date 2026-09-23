@@ -55,6 +55,14 @@ bash scripts/tf-guard.sh
 
 Each new sandbox session spins up a brand-new AWS account. This scans every project under `terraform/` and archives any local state left over from a previous (now-defunct) sandbox account, so `terraform plan`/`apply` won't hit cross-account `AccessDenied` errors.
 
+### Before deploying a new Lambda-backed integration
+
+```bash
+bash scripts/service-integration-guard.sh
+```
+
+Static, advisory checks (no AWS credentials needed) for the bug classes that broke the `get_text_from_s3` Redshift Lambda UDF the first time it was deployed: Lambda handlers returning a raw dict instead of `json.dumps(...)` for synchronous external-function-style callers, unqualified `VARCHAR`/`CHAR` sizes in Terraform-embedded SQL, and overly-broad `resources = ["*"]` in IAM policies. See [.cursor/rules/lambda-service-integration-lessons.mdc](.cursor/rules/lambda-service-integration-lessons.mdc) for the full write-up.
+
 ---
 
 ## Terraform
