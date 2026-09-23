@@ -36,6 +36,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Lambda deployment packages built by archive_file (regenerated on apply)
+**/scripts/**/*.zip
+
 # ============================================================
 # AWS SAM
 # ============================================================

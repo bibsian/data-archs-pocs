@@ -76,8 +76,12 @@ resource "aws_redshift_cluster" "spectrum" {
 
   cluster_subnet_group_name = aws_redshift_subnet_group.main.name
   vpc_security_group_ids    = [aws_security_group.redshift.id]
-  iam_roles                 = [aws_iam_role.redshift_spectrum.arn]
-  default_iam_role_arn      = aws_iam_role.redshift_spectrum.arn
+  # redshift_spectrum is the default role (used for Spectrum/Data API access).
+  # redshift_lambda_invoke (defined in lambda_text_udf.tf) is a second,
+  # narrowly-scoped role a cluster-associated role must be for Redshift to
+  # reference it via IAM_ROLE in CREATE EXTERNAL FUNCTION ... LAMBDA.
+  iam_roles            = [aws_iam_role.redshift_spectrum.arn, aws_iam_role.redshift_lambda_invoke.arn]
+  default_iam_role_arn = aws_iam_role.redshift_spectrum.arn
 
   encrypted           = true
   publicly_accessible = false
