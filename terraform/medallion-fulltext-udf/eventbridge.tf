@@ -153,6 +153,33 @@ resource "aws_glue_trigger" "start_silver_on_bronze_success" {
   }
 }
 
+# Fans out in parallel with start_silver_on_bronze_success above — both fire
+# off the same bronze SUCCEEDED condition, so the terms_text catalog stays
+# in sync with every CSV upload without adding latency to the silver/gold
+# chain.
+resource "aws_glue_trigger" "start_terms_catalog_on_bronze_success" {
+  name          = "${var.project_name}-start-terms-catalog-on-bronze-success"
+  type          = "CONDITIONAL"
+  workflow_name = aws_glue_workflow.source_to_bronze.name
+
+  start_on_creation = true
+
+  predicate {
+    conditions {
+      job_name = aws_glue_job.source_to_bronze_offload.name
+      state    = "SUCCEEDED"
+    }
+  }
+
+  actions {
+    job_name = aws_glue_job.terms_to_catalog.name
+  }
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
 resource "aws_glue_trigger" "start_gold_on_silver_success" {
   name          = "${var.project_name}-start-gold-on-silver-success"
   type          = "CONDITIONAL"
