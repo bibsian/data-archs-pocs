@@ -81,3 +81,21 @@ variable "terms_catalog_table_name" {
   type        = string
   default     = "terms_text"
 }
+
+variable "text_udf_lambda_function_name" {
+  description = "Name of the Lambda function backing the gold.get_text_from_s3 Redshift external function"
+  type        = string
+  default     = "get-text-from-s3"
+}
+
+variable "text_udf_max_batch_rows" {
+  description = "Guardrail: max rows Lambda will resolve individually in one Redshift invocation batch before returning a 'too many documents' message for every row in that batch instead"
+  type        = number
+  default     = 100
+}
+
+variable "text_udf_max_object_bytes" {
+  description = "Guardrail: max S3 object size (bytes) Lambda will return inline; larger objects return a 'document too large' message instead of the body. Kept safely under Redshift's 65,535-byte VARCHAR limit"
+  type        = number
+  default     = 60000
+}

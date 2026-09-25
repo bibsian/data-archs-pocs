@@ -1,0 +1,107 @@
+---
+description: Lessons learned debugging a Redshift Lambda UDF integration — generic guidance for building any Lambda-backed AWS service integration and the Terraform/IaC hygiene around it
+alwaysApply: true
+---
+
+# Lambda-backed service integration lessons
+
+Learned while debugging `get_text_from_s3` (a Redshift external function backed
+by Lambda). Generic to any Lambda that backs another AWS service's synchronous
+request/response protocol, and to Terraform/IaC work more broadly — apply
+these even when the target service isn't Redshift.
+
+## Group A — Lambda-backed synchronous integrations
+
+**Return a JSON string, not a raw dict/object**, when a Lambda backs another
+AWS service's synchronous request/response protocol (Redshift external
+functions, Athena UDFs, etc.):
+
+```python
+# BAD — auto-serializes fine for a direct `aws lambda invoke` test, but many
+# external-function-style callers require the Payload to itself be a JSON
+# string, not a bare top-level object. Fails with an opaque protocol error
+# and zero CloudWatch errors (the Lambda executed successfully).
+return {"success": True, "results": results}
+
+# GOOD
+import json
+return json.dumps({"success": True, "results": results})
+```
+
+This is a trap because testing the Lambda standalone (`aws lambda invoke`)
+produces byte-identical JSON either way — the bug only appears against the
+real caller.
+
+**Specify explicit sizes for text types.** An unqualified type can carry a
+small implicit default from the target system. Redshift's `VARCHAR` (no
+length) defaults to `VARCHAR(256)`, silently truncating anything larger with
+`Value too long for character type`:
+
+```sql
+-- BAD: implicit VARCHAR(256)
+CREATE OR REPLACE EXTERNAL FUNCTION gold.get_text_from_s3(s3_uri VARCHAR)
+RETURNS VARCHAR
+
+-- GOOD: explicit size matching the real data
+CREATE OR REPLACE EXTERNAL FUNCTION gold.get_text_from_s3(s3_uri VARCHAR(65535))
+RETURNS VARCHAR(65535)
+```
+
+**Cross-service IAM invocation needs explicit association, not just a
+policy.** Granting `lambda:InvokeFunction` to a role isn't enough for
+Redshift to use it via `IAM_ROLE` in `CREATE EXTERNAL FUNCTION` — the role
+must also be added to the calling resource's own role list (e.g. the
+cluster's `iam_roles`). A permissions policy alone silently doesn't work.
+
+**Scope IAM resources tightly even in a sandbox** (`s3:GetObject` to one
+prefix, `lambda:InvokeFunction` to one function ARN, not `"*"`) — sandbox
+habits become production habits.
+
+## Group B — Debugging opaque integration errors
+
+**Test against the real caller, not a simulated payload.** A managed
+service's actual invocation can differ from your best-effort reconstruction
+of its documented contract. When you hit a protocol-level error with no
+stack trace:
+1. Add temporary debug logging of the raw input event AND raw output
+   response inside the handler.
+2. Redeploy fast — `aws lambda update-function-code` directly, skipping the
+   full IaC apply cycle, for quick iteration.
+3. Reproduce via the real caller (e.g. `aws redshift-data
+   execute-statement`), not a payload you constructed yourself.
+4. Read CloudWatch Logs for that exact invocation.
+5. Remove the debug logging once the real cause is confirmed.
+
+**Don't trust secondary sources over a live test.** Community answers
+(Stack Overflow, blog posts) can be confidently wrong or context-specific —
+validate any fix hypothesis with a minimal reproducible live test before
+committing to it.
+
+## Group C — Terraform/state hygiene
+
+**Account-level singleton resources persist independent of Terraform
+state.** IAM Service-Linked Roles (e.g. `AWSServiceRoleForRedshift`) are
+unique per AWS account and can already exist from an earlier
+session/apply. Don't assume "the sandbox account is always fresh" — verify
+with `aws iam get-role --role-name ...` before treating an "already
+exists" apply error as a real conflict; `terraform import` it instead of
+fighting the create.
+
+**Local state doesn't follow a directory rename.** `terraform.tfstate` and
+`.terraform/` are gitignored, so renaming a Terraform project directory
+leaves any local state behind at the old path. Check `find . -iname
+"terraform.tfstate*"` before and after a rename.
+
+**Check the current state's actual variable values before touching an
+existing deployment.** Don't blindly copy an example `-var=...` from a
+README when a deployment already exists — inspect `terraform state list`
+or existing resource names first. A mismatched var value can produce a
+huge, scary plan (mass renames/replacements) unrelated to your actual
+change.
+
+## Validation
+
+Run `scripts/service-integration-guard.sh` before deploying any new
+Lambda-backed integration — it statically checks for the Group A code
+patterns above (dict-vs-JSON-string returns, unqualified VARCHAR/CHAR
+sizes, overly-broad IAM resources).

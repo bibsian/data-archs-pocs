@@ -117,3 +117,23 @@ output "redshift_terms_table" {
   description = "Redshift query target for the terms text table (via Spectrum) after the terms_to_catalog job runs"
   value       = "${var.redshift_external_schema_name}.${var.terms_catalog_table_name}"
 }
+
+output "text_udf_lambda_function_name" {
+  description = "Name of the Lambda function backing the gold.get_text_from_s3 external function"
+  value       = aws_lambda_function.get_text_from_s3.function_name
+}
+
+output "text_udf_lambda_function_arn" {
+  description = "ARN of the Lambda function backing the gold.get_text_from_s3 external function"
+  value       = aws_lambda_function.get_text_from_s3.arn
+}
+
+output "redshift_lambda_invoke_role_arn" {
+  description = "ARN of the IAM role Redshift assumes to invoke get_text_from_s3 (scoped to lambda:InvokeFunction on this one function)"
+  value       = aws_iam_role.redshift_lambda_invoke.arn
+}
+
+output "redshift_get_text_from_s3_function" {
+  description = "Redshift external function for inline single/few-record text retrieval, e.g. SELECT id, get_text_from_s3(terms) FROM gold.gold_data WHERE id IN (...)"
+  value       = "${var.gold_schema_name}.get_text_from_s3"
+}

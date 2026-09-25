@@ -55,6 +55,14 @@ bash scripts/tf-guard.sh
 
 Each new sandbox session spins up a brand-new AWS account. This scans every project under `terraform/` and archives any local state left over from a previous (now-defunct) sandbox account, so `terraform plan`/`apply` won't hit cross-account `AccessDenied` errors.
 
+### Before deploying a new Lambda-backed integration
+
+```bash
+bash scripts/service-integration-guard.sh
+```
+
+Static, advisory checks (no AWS credentials needed) for the bug classes that broke the `get_text_from_s3` Redshift Lambda UDF the first time it was deployed: Lambda handlers returning a raw dict instead of `json.dumps(...)` for synchronous external-function-style callers, unqualified `VARCHAR`/`CHAR` sizes in Terraform-embedded SQL, and overly-broad `resources = ["*"]` in IAM policies. See [.cursor/rules/lambda-service-integration-lessons.mdc](.cursor/rules/lambda-service-integration-lessons.mdc) for the full write-up.
+
 ---
 
 ## Terraform
@@ -75,7 +83,7 @@ terraform apply -var="project_name=data-archs"
 terraform destroy
 ```
 
-### `s3-bucket-to-iceberg` — automatic trigger
+### `medallion-fulltext-udf` — automatic trigger
 
 Uploading a `.csv` to the source bucket automatically kicks off the full medallion pipeline — bronze → silver → gold — via a single Glue Workflow (see `eventbridge.tf`):
 
@@ -124,7 +132,7 @@ through `lake_external` as soon as each job has run at least once.
 that `silver_to_gold` populates via `CREATE TABLE AS SELECT`.
 
 ```bash
-cd terraform/s3-bucket-to-iceberg
+cd terraform/medallion-fulltext-udf
 
 # Bronze/silver — read through Spectrum
 aws redshift-data execute-statement \
@@ -153,7 +161,9 @@ aws redshift-data execute-statement \
 
 Each command returns an `Id`. Inspect it with `aws redshift-data describe-statement --id <Id> --profile pluralsight`, then retrieve rows with `aws redshift-data get-statement-result --id <Id> --profile pluralsight`.
 
-### Querying the offloaded `terms` text
+The offloaded `terms` text can be read back two ways, depending on how much of it you need at once:
+
+### Querying the offloaded `terms` text via Spectrum (bulk / joins)
 
 `raw_data_with_pointers`/`silver_data`/`gold_data` only store an `s3://` pointer for `terms` (the claim-check pattern — see `source_to_bronze_offload.py`). Rather than dereferencing each pointer by hand, the `terms_to_catalog` job reshapes every `terms/{id}.txt` object into a `terms_text` Glue table (`id`, `terms_text`, `s3_uri`). It's registered in the same Glue database that `lake_external` maps to, so it's queryable as `lake_external.terms_text` immediately — no extra `CREATE EXTERNAL SCHEMA` needed. That means it can be `JOIN`ed straight into `gold.gold_data`, a **native/internal** Redshift table, in one query spanning both:
 
@@ -169,7 +179,26 @@ aws redshift-data execute-statement \
   --profile pluralsight
 ```
 
-A raw external `TEXTFILE` table pointed straight at `terms/` won't work here: Spectrum/Athena text SerDes split rows on newlines and have no way to recover `id` from the file content (only the filename has it), and `terms` is free-form text that can legitimately span multiple lines. `terms_to_catalog.py` reads each object's full body via `boto3` instead, so multi-line text is never corrupted.
+A raw external `TEXTFILE` table pointed straight at `terms/` won't work here: Spectrum/Athena text SerDes split rows on newlines and have no way to recover `id` from the file content (only the filename has it), and `terms` is free-form text that can legitimately span multiple lines. `terms_to_catalog.py` reads each object's full body via `boto3` instead, so multi-line text is never corrupted. Use this path when you need `terms` for many rows at once (joins, exports, analytics).
+
+### Querying the offloaded `terms` text via the Lambda UDF (single/few records)
+
+`gold.gold_data.terms` holds an `s3://` pointer, not the offloaded text itself (the claim-check pattern — see above). To read the actual text inline in SQL, `terraform apply` also registers a Redshift external function, `gold.get_text_from_s3(s3_uri)`, backed by a small Lambda (`get-text-from-s3`) that fetches one object from the terms bucket per call:
+
+```sql
+-- Recommended pattern: filter to a handful of known documents first, then
+-- dereference the pointer only for those rows.
+SELECT id, terms, gold.get_text_from_s3(terms) AS full_text
+FROM gold.gold_data
+WHERE id IN ('1', '2', '3');
+```
+
+This is for **single/few-record inline retrieval only, not bulk export** — every row triggers its own Lambda invocation. Two guardrails are built into the Lambda itself (`scripts/get_text_from_s3/handler.py`), so a query that fans out too wide gets a clear message in the result cell instead of a slow/silent failure:
+
+- **Batch-row-count cap** (`text_udf_max_batch_rows`, default 100) — if a single invocation batch has more rows than this, every row in it gets `"Too many documents requested in a single query - limit your query to 100 documents or fewer for inline retrieval."` instead of its text.
+- **Per-object size cap** (`text_udf_max_object_bytes`, default 60,000 bytes — safely under Redshift's 65,535-byte VARCHAR limit) — if a fetched object is larger than this, that row gets `"Document too large for inline retrieval (<size> bytes) - limit your query to 100 documents or less."` instead of its text.
+
+Both are configurable via Terraform variables (`text_udf_max_batch_rows`, `text_udf_max_object_bytes`) and passed to the Lambda as environment variables. Other per-row failures (missing object, access denied, malformed `s3_uri`) also return a human-readable message rather than failing the whole query — see the function names/ARNs in Terraform outputs (`text_udf_lambda_function_name`, `redshift_get_text_from_s3_function`, etc.) for quick reference or Redshift Data API testing.
 
 ## Project structure
 
@@ -182,7 +211,7 @@ aws_learn/
 │   ├── configure-sandbox.sh       # Set sandbox credentials each session
 │   └── tf-guard.sh                # Archive stale state from a previous sandbox account
 ├── terraform/
-│   └── s3-bucket-to-iceberg/                 # Project: S3 bucket example
+│   └── medallion-fulltext-udf/                # Project: medallion pipeline + guardrailed full-text Lambda UDF
 │       ├── main.tf
 │       ├── variables.tf
 │       ├── outputs.tf
@@ -190,6 +219,7 @@ aws_learn/
 │       │                           # plus CONDITIONAL triggers chaining bronze -> silver/terms-catalog -> gold
 │       ├── glue.tf                 # Glue jobs/triggers for bronze, silver, gold, and terms-catalog
 │       ├── redshift.tf             # Redshift cluster, lake_external schema, gold schema
+│       ├── lambda_text_udf.tf      # get-text-from-s3 Lambda + IAM roles + gold.get_text_from_s3 external function
 │       └── scripts/
 │           ├── source_to_bronze_offload.py # CSV -> bronze Iceberg w/ terms claim-check (raw_data_with_pointers)
 │           ├── dq_checks.py                # Extensible DQCheck framework + CHECK_REGISTRY
@@ -197,5 +227,7 @@ aws_learn/
 │           │   └── dq_rules.json           # Declarative DQ rule config (which checks, which columns)
 │           ├── bronze_to_silver.py          # bronze Iceberg -> silver + silver_quarantine Iceberg
 │           ├── silver_to_gold.py            # silver Iceberg -> native gold.gold_data (Redshift Data API)
-│           └── terms_to_catalog.py          # terms/{id}.txt objects -> queryable terms_text Parquet table
+│           ├── terms_to_catalog.py          # terms/{id}.txt objects -> queryable terms_text Parquet table
+│           └── get_text_from_s3/
+│               └── handler.py               # Lambda behind gold.get_text_from_s3 (guardrailed inline text retrieval)
 ```
