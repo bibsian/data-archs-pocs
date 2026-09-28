@@ -220,3 +220,57 @@ resource "aws_glue_trigger" "silver_to_gold" {
     Project = var.project_name
   }
 }
+
+# ---------------------------------------------------------------------------
+# Terms catalog — a queryable Parquet table (id, terms_text, s3_uri) so the
+# full `terms` text can be joined against any Redshift table (native or
+# Spectrum) instead of being dereferenced by hand, one s3:// pointer at a
+# time. Populated directly by source_to_bronze_offload (step 7 in that
+# script) — while it still has the original `terms` text in hand, before
+# overwriting that column with the s3:// pointer — rather than by a
+# separate job that re-reads every terms/{id}.txt object back from S3.
+# ---------------------------------------------------------------------------
+
+# Glue table declared directly in Terraform (not job-inferred). It lives in
+# the same `lake` database that the `lake_external` Spectrum schema already
+# maps to (redshift.tf), so it becomes queryable as lake_external.terms_text
+# with no further Redshift-side changes. Its location is a prefix under the
+# existing bronze bucket, so no new bucket or IAM policy is required: the
+# glue_job role's ReadWriteBronze/GlueCatalog statements and the
+# redshift_spectrum role's ReadBronzeIcebergFiles/Objects statements in
+# iam.tf already cover the whole bronze bucket ARN and the `lake` database.
+resource "aws_glue_catalog_table" "terms_text" {
+  name          = var.terms_catalog_table_name
+  database_name = aws_glue_catalog_database.lake.name
+  table_type    = "EXTERNAL_TABLE"
+
+  parameters = {
+    "classification"      = "parquet"
+    "EXTERNAL"            = "true"
+    "parquet.compression" = "SNAPPY"
+  }
+
+  storage_descriptor {
+    location      = "s3://${aws_s3_bucket.bronze.bucket}/terms_catalog/"
+    input_format  = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
+    output_format = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
+
+    ser_de_info {
+      name                  = "parquet"
+      serialization_library = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+    }
+
+    columns {
+      name = "id"
+      type = "string"
+    }
+    columns {
+      name = "terms_text"
+      type = "string"
+    }
+    columns {
+      name = "s3_uri"
+      type = "string"
+    }
+  }
+}

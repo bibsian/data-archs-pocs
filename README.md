@@ -87,7 +87,7 @@ terraform destroy
 
 Uploading a `.csv` to the source bucket automatically kicks off the full medallion pipeline — bronze → silver → gold — via a single Glue Workflow (see `eventbridge.tf`):
 
-1. **Bronze** — `source_to_bronze_offload` (S3 → EventBridge trigger) reads the CSV, offloads `terms` text (claim-check pattern), writes `raw_data_with_pointers` as Iceberg.
+1. **Bronze** — `source_to_bronze_offload` (S3 → EventBridge trigger) reads the CSV, offloads `terms` text (claim-check pattern) to `terms/{id}.txt`, writes `raw_data_with_pointers` as Iceberg, and — while it still has the original `terms` text in hand — also writes the `terms_text` Parquet catalog (`id`, `terms_text`, `s3_uri`) used for bulk Spectrum joins (see [Querying the offloaded `terms` text](#querying-the-offloaded-terms-text) below).
 2. **Silver** — once bronze `SUCCEEDED`, a `CONDITIONAL` trigger starts `bronze_to_silver`, which runs the configurable DQ checks in `scripts/config/dq_rules.json` (implemented in `scripts/dq_checks.py`) and splits the result into `silver_data` (passed) and `silver_data_quarantine` (failed) Iceberg tables.
 3. **Gold** — once silver `SUCCEEDED`, another `CONDITIONAL` trigger starts `silver_to_gold`, a lightweight Glue Python Shell job that runs `DROP TABLE` + `CREATE TABLE AS SELECT` through the Redshift Data API, copying `silver_data` into the native `gold.gold_data` table.
 
@@ -160,7 +160,27 @@ aws redshift-data execute-statement \
 
 Each command returns an `Id`. Inspect it with `aws redshift-data describe-statement --id <Id> --profile pluralsight`, then retrieve rows with `aws redshift-data get-statement-result --id <Id> --profile pluralsight`.
 
-### Query full text via the Lambda UDF
+The offloaded `terms` text can be read back two ways, depending on how much of it you need at once:
+
+### Querying the offloaded `terms` text via Spectrum (bulk / joins)
+
+`raw_data_with_pointers`/`silver_data`/`gold_data` only store an `s3://` pointer for `terms` (the claim-check pattern — see `source_to_bronze_offload.py`). Rather than dereferencing each pointer by hand, `source_to_bronze_offload` writes a second output alongside the pointer-flattened Iceberg table: a `terms_text` Glue table (`id`, `terms_text`, `s3_uri`), built directly from the Spark DataFrame while it still holds the original text — no separate job re-reading every object back from S3. It's registered in the same Glue database that `lake_external` maps to, so it's queryable as `lake_external.terms_text` immediately — no extra `CREATE EXTERNAL SCHEMA` needed. That means it can be `JOIN`ed straight into `gold.gold_data`, a **native/internal** Redshift table, in one query spanning both:
+
+```bash
+aws redshift-data execute-statement \
+  --cluster-identifier "$(terraform output -raw redshift_cluster_identifier)" \
+  --database "$(terraform output -raw redshift_database_name)" \
+  --secret-arn "$(terraform output -raw redshift_admin_secret_arn)" \
+  --sql "SELECT g.id, g.terms AS terms_pointer, t.terms_text
+         FROM $(terraform output -raw redshift_gold_table) g
+         JOIN $(terraform output -raw redshift_terms_table) t ON g.id = t.id
+         LIMIT 10" \
+  --profile pluralsight
+```
+
+A raw external `TEXTFILE` table pointed straight at `terms/` won't work here: Spectrum/Athena text SerDes split rows on newlines and have no way to recover `id` from the file content (only the filename has it), and `terms` is free-form text that can legitimately span multiple lines. Writing `terms_text` from the DataFrame directly (`.write.mode("overwrite").format("parquet")` in `source_to_bronze_offload.py`) sidesteps both problems, since the text never gets serialized to a line-based format. Use this path when you need `terms` for many rows at once (joins, exports, analytics).
+
+### Querying the offloaded `terms` text via the Lambda UDF (single/few records)
 
 `gold.gold_data.terms` holds an `s3://` pointer, not the offloaded text itself (the claim-check pattern — see above). To read the actual text inline in SQL, `terraform apply` also registers a Redshift external function, `gold.get_text_from_s3(s3_uri)`, backed by a small Lambda (`get-text-from-s3`) that fetches one object from the terms bucket per call:
 
@@ -196,11 +216,12 @@ aws_learn/
 │       ├── outputs.tf
 │       ├── eventbridge.tf          # S3 -> EventBridge -> Glue Workflow auto-trigger,
 │       │                           # plus CONDITIONAL triggers chaining bronze -> silver -> gold
-│       ├── glue.tf                 # Glue jobs/triggers for bronze, silver, and gold
+│       ├── glue.tf                 # Glue jobs/triggers for bronze, silver, and gold; declares the terms_text Glue table
 │       ├── redshift.tf             # Redshift cluster, lake_external schema, gold schema
 │       ├── lambda_text_udf.tf      # get-text-from-s3 Lambda + IAM roles + gold.get_text_from_s3 external function
 │       └── scripts/
-│           ├── source_to_bronze_offload.py # CSV -> bronze Iceberg w/ terms claim-check (raw_data_with_pointers)
+│           ├── source_to_bronze_offload.py # CSV -> bronze Iceberg w/ terms claim-check (raw_data_with_pointers);
+│           │                               # also writes the terms_text Parquet catalog
 │           ├── dq_checks.py                # Extensible DQCheck framework + CHECK_REGISTRY
 │           ├── config/
 │           │   └── dq_rules.json           # Declarative DQ rule config (which checks, which columns)

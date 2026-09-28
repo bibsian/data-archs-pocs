@@ -108,6 +108,11 @@ output "redshift_gold_table" {
   value       = "${var.gold_schema_name}.${var.gold_table_name}"
 }
 
+output "redshift_terms_table" {
+  description = "Redshift query target for the terms text table (via Spectrum), populated by source_to_bronze_offload"
+  value       = "${var.redshift_external_schema_name}.${var.terms_catalog_table_name}"
+}
+
 output "text_udf_lambda_function_name" {
   description = "Name of the Lambda function backing the gold.get_text_from_s3 external function"
   value       = aws_lambda_function.get_text_from_s3.function_name
