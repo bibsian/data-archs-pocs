@@ -2,6 +2,18 @@
 
 Experimentation repo for AWS using Pluralsight cloud sandboxes.
 
+## Local Spark (PySpark debugging)
+
+[spark/](spark/) is a standalone, fully offline Docker Compose sandbox for
+debugging PySpark/Iceberg code in local mode -- no AWS credentials, no
+deployment, not referenced by Terraform. See [spark/README.md](spark/README.md).
+
+```bash
+spark/scripts/up.sh      # build + start (JupyterLab at http://localhost:8888)
+spark/scripts/shell.sh   # pyspark REPL
+spark/scripts/down.sh    # stop
+```
+
 ## Prerequisites
 
 Install these tools once:
@@ -186,6 +198,7 @@ To add a new project, create a new subdirectory (e.g. `terraform/vpc/` or `serve
 
 ```
 aws_learn/
+├── spark/                          # Local, offline PySpark/Iceberg debugging sandbox (see spark/README.md)
 ├── scripts/
 │   ├── configure-sandbox.sh       # Set sandbox credentials each session
 │   └── tf-guard.sh                # Archive stale state from a previous sandbox account

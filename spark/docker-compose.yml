@@ -1,0 +1,35 @@
+
+services:
+  pyspark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: local-spark-pyspark:glue5
+    container_name: local-spark-pyspark
+    working_dir: /home/hadoop/workspace
+    volumes:
+      # Mount the whole repo so the sandbox can read the sample data under
+      # data/ and import the real dq_checks.py / dq_rules.json from
+      # terraform/medallion-fulltext-udf/scripts/ unmodified.
+      - ..:/home/hadoop/workspace
+    ports:
+      - "8888:8888"   # JupyterLab
+      - "4040:4040"   # Spark UI (active job/session)
+      - "18080:18080" # Spark History Server (optional, start manually)
+    tty: true
+    stdin_open: true
+    # Foreground process for the container: a token-less local JupyterLab.
+    # Use scripts/shell.sh or scripts/submit.sh (docker compose exec) for
+    # terminal-based debugging against the same running container.
+    #
+    # The base image's ENTRYPOINT is `bash -l`, which runs its first CMD
+    # argument as a *script file* (found via a PATH search) rather than
+    # exec-ing it -- that breaks for a Python-shebang script like `jupyter`.
+    # Passing `-c "<command>"` makes bash evaluate it as a normal shell
+    # command instead, matching AWS's own `-c "..."` examples for this image.
+    command:
+      - -c
+      - >-
+        jupyter lab --no-browser --ip=0.0.0.0 --allow-root
+        --ServerApp.root_dir=/home/hadoop/workspace
+        --ServerApp.token= --ServerApp.password=
