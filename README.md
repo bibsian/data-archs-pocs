@@ -87,12 +87,11 @@ terraform destroy
 
 Uploading a `.csv` to the source bucket automatically kicks off the full medallion pipeline — bronze → silver → gold — via a single Glue Workflow (see `eventbridge.tf`):
 
-1. **Bronze** — `source_to_bronze_offload` (S3 → EventBridge trigger) reads the CSV, offloads `terms` text (claim-check pattern), writes `raw_data_with_pointers` as Iceberg.
+1. **Bronze** — `source_to_bronze_offload` (S3 → EventBridge trigger) reads the CSV, offloads `terms` text (claim-check pattern) to `terms/{id}.txt`, writes `raw_data_with_pointers` as Iceberg, and — while it still has the original `terms` text in hand — also writes the `terms_text` Parquet catalog (`id`, `terms_text`, `s3_uri`) used for bulk Spectrum joins (see [Querying the offloaded `terms` text](#querying-the-offloaded-terms-text) below).
 2. **Silver** — once bronze `SUCCEEDED`, a `CONDITIONAL` trigger starts `bronze_to_silver`, which runs the configurable DQ checks in `scripts/config/dq_rules.json` (implemented in `scripts/dq_checks.py`) and splits the result into `silver_data` (passed) and `silver_data_quarantine` (failed) Iceberg tables.
 3. **Gold** — once silver `SUCCEEDED`, another `CONDITIONAL` trigger starts `silver_to_gold`, a lightweight Glue Python Shell job that runs `DROP TABLE` + `CREATE TABLE AS SELECT` through the Redshift Data API, copying `silver_data` into the native `gold.gold_data` table.
-4. **Terms catalog** — in parallel with silver (also gated on bronze `SUCCEEDED`), another `CONDITIONAL` trigger starts `terms_to_catalog`, a lightweight Glue Python Shell job that reads every offloaded `terms/{id}.txt` object's full body via boto3 and reshapes them into a Parquet table (`id`, `terms_text`, `s3_uri`) — see [Querying the offloaded `terms` text](#querying-the-offloaded-terms-text) below.
 
-`source_to_bronze_offload` is the sole bronze entry point — the standalone `source_to_bronze` job/`raw_data` table has been removed; every CSV upload now flows straight through bronze → silver/terms-catalog (in parallel) → gold.
+`source_to_bronze_offload` is the sole bronze entry point — the standalone `source_to_bronze` job/`raw_data` table has been removed; every CSV upload now flows straight through bronze → silver → gold.
 
 ```bash
 # Upload a test file to trigger the pipeline
@@ -102,7 +101,7 @@ aws s3 cp sample.csv s3://<source_bucket_name>/ --profile pluralsight
 aws glue get-workflow-runs --name <glue_workflow_name> --profile pluralsight
 ```
 
-The bucket/workflow names are printed as Terraform outputs (`source_bucket_name`, `glue_workflow_name`) after `apply`. All four jobs (`glue_offload_job_name`, `glue_silver_job_name`, `glue_gold_job_name`, `glue_terms_catalog_job_name`) also have their own `ON_DEMAND` triggers for manual re-runs.
+The bucket/workflow names are printed as Terraform outputs (`source_bucket_name`, `glue_workflow_name`) after `apply`. All three jobs (`glue_offload_job_name`, `glue_silver_job_name`, `glue_gold_job_name`) also have their own `ON_DEMAND` triggers for manual re-runs.
 
 #### Configuring silver-layer DQ checks
 
@@ -165,7 +164,7 @@ The offloaded `terms` text can be read back two ways, depending on how much of i
 
 ### Querying the offloaded `terms` text via Spectrum (bulk / joins)
 
-`raw_data_with_pointers`/`silver_data`/`gold_data` only store an `s3://` pointer for `terms` (the claim-check pattern — see `source_to_bronze_offload.py`). Rather than dereferencing each pointer by hand, the `terms_to_catalog` job reshapes every `terms/{id}.txt` object into a `terms_text` Glue table (`id`, `terms_text`, `s3_uri`). It's registered in the same Glue database that `lake_external` maps to, so it's queryable as `lake_external.terms_text` immediately — no extra `CREATE EXTERNAL SCHEMA` needed. That means it can be `JOIN`ed straight into `gold.gold_data`, a **native/internal** Redshift table, in one query spanning both:
+`raw_data_with_pointers`/`silver_data`/`gold_data` only store an `s3://` pointer for `terms` (the claim-check pattern — see `source_to_bronze_offload.py`). Rather than dereferencing each pointer by hand, `source_to_bronze_offload` writes a second output alongside the pointer-flattened Iceberg table: a `terms_text` Glue table (`id`, `terms_text`, `s3_uri`), built directly from the Spark DataFrame while it still holds the original text — no separate job re-reading every object back from S3. It's registered in the same Glue database that `lake_external` maps to, so it's queryable as `lake_external.terms_text` immediately — no extra `CREATE EXTERNAL SCHEMA` needed. That means it can be `JOIN`ed straight into `gold.gold_data`, a **native/internal** Redshift table, in one query spanning both:
 
 ```bash
 aws redshift-data execute-statement \
@@ -179,7 +178,7 @@ aws redshift-data execute-statement \
   --profile pluralsight
 ```
 
-A raw external `TEXTFILE` table pointed straight at `terms/` won't work here: Spectrum/Athena text SerDes split rows on newlines and have no way to recover `id` from the file content (only the filename has it), and `terms` is free-form text that can legitimately span multiple lines. `terms_to_catalog.py` reads each object's full body via `boto3` instead, so multi-line text is never corrupted. Use this path when you need `terms` for many rows at once (joins, exports, analytics).
+A raw external `TEXTFILE` table pointed straight at `terms/` won't work here: Spectrum/Athena text SerDes split rows on newlines and have no way to recover `id` from the file content (only the filename has it), and `terms` is free-form text that can legitimately span multiple lines. Writing `terms_text` from the DataFrame directly (`.write.mode("overwrite").format("parquet")` in `source_to_bronze_offload.py`) sidesteps both problems, since the text never gets serialized to a line-based format. Use this path when you need `terms` for many rows at once (joins, exports, analytics).
 
 ### Querying the offloaded `terms` text via the Lambda UDF (single/few records)
 
@@ -216,18 +215,18 @@ aws_learn/
 │       ├── variables.tf
 │       ├── outputs.tf
 │       ├── eventbridge.tf          # S3 -> EventBridge -> Glue Workflow auto-trigger,
-│       │                           # plus CONDITIONAL triggers chaining bronze -> silver/terms-catalog -> gold
-│       ├── glue.tf                 # Glue jobs/triggers for bronze, silver, gold, and terms-catalog
+│       │                           # plus CONDITIONAL triggers chaining bronze -> silver -> gold
+│       ├── glue.tf                 # Glue jobs/triggers for bronze, silver, and gold; declares the terms_text Glue table
 │       ├── redshift.tf             # Redshift cluster, lake_external schema, gold schema
 │       ├── lambda_text_udf.tf      # get-text-from-s3 Lambda + IAM roles + gold.get_text_from_s3 external function
 │       └── scripts/
-│           ├── source_to_bronze_offload.py # CSV -> bronze Iceberg w/ terms claim-check (raw_data_with_pointers)
+│           ├── source_to_bronze_offload.py # CSV -> bronze Iceberg w/ terms claim-check (raw_data_with_pointers);
+│           │                               # also writes the terms_text Parquet catalog
 │           ├── dq_checks.py                # Extensible DQCheck framework + CHECK_REGISTRY
 │           ├── config/
 │           │   └── dq_rules.json           # Declarative DQ rule config (which checks, which columns)
 │           ├── bronze_to_silver.py          # bronze Iceberg -> silver + silver_quarantine Iceberg
 │           ├── silver_to_gold.py            # silver Iceberg -> native gold.gold_data (Redshift Data API)
-│           ├── terms_to_catalog.py          # terms/{id}.txt objects -> queryable terms_text Parquet table
 │           └── get_text_from_s3/
 │               └── handler.py               # Lambda behind gold.get_text_from_s3 (guardrailed inline text retrieval)
 ```

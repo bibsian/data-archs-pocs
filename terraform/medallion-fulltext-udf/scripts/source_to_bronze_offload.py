@@ -5,14 +5,18 @@ Purpose: Read CSV files dropped in the source S3 bucket, offload the large
 free-text `terms` field for each row to its own object in a dedicated S3
 bucket, replace that field in the row with a pointer (the object's s3://
 URI), add ingestion metadata, and write the resulting flat file as an
-Apache Iceberg table in the bronze S3 bucket.
+Apache Iceberg table in the bronze S3 bucket. While the original `terms`
+text is still in hand (before it's overwritten with the pointer), this job
+also writes a queryable `terms_text` Parquet catalog (id, terms_text,
+s3_uri) — see step 7 below.
 
 This is the "claim-check" pattern: instead of storing large text blobs
 inline in every table row (which bloats file sizes, slows scans, and can
 hit engine-specific string limits like Redshift's 65535-byte VARCHAR cap),
 each blob is written once to S3 and the row keeps a lightweight pointer to
 it. Consumers dereference the pointer only when they actually need the
-full text.
+full text — either via the `terms_text` Spectrum table (bulk/joins) or the
+`get_text_from_s3` Lambda UDF (single/few records).
 
 This is the sole bronze entry point for the pipeline: it reads the source
 bucket, writes `raw_data_with_pointers` as Iceberg, and feeds the silver
@@ -59,6 +63,7 @@ args = getResolvedOptions(
 )
 
 TERMS_PREFIX = "terms/"
+TERMS_CATALOG_PREFIX = "terms_catalog/"
 
 # ---------------------------------------------------------------------------
 # 2. Configure Iceberg catalog BEFORE starting Spark
@@ -175,15 +180,51 @@ offload_udf = udf(
     StringType(),
 )
 
-# Overwrite the `terms` column in place: same column name and position in the
-# schema, but the value is now an s3:// pointer instead of the raw text.
+# Compute the pointer into its own column first (rather than overwriting
+# `terms` immediately) so both the original text *and* the pointer are still
+# available afterward — the terms_text catalog in step 7 needs both.
+#
+# .cache() matters here for correctness, not just performance: this
+# DataFrame feeds two separate write actions below (the terms_text Parquet
+# catalog, then the bronze Iceberg table). Spark is lazy, so without
+# caching, each action would independently re-evaluate offload_udf —
+# including its S3 PutObject side effect — writing every terms/{id}.txt
+# object twice per job run instead of once.
+df = df.withColumn("_terms_s3_uri", offload_udf(col("id"), col("terms"))).cache()
+
+# ---------------------------------------------------------------------------
+# 7. Write the terms_text catalog — a queryable Parquet table (id,
+#    terms_text, s3_uri) so the full `terms` text can be JOINed into any
+#    Redshift table (native or Spectrum) instead of being dereferenced by
+#    hand, one s3:// pointer at a time. Registered as a Glue table directly
+#    in Terraform (aws_glue_catalog_table.terms_text in glue.tf) at this
+#    same S3 location, in the same `lake` database that `lake_external`
+#    maps to — so it's queryable as lake_external.terms_text with no
+#    additional Redshift-side changes.
+#
+#    Full refresh (.mode("overwrite")) on every run, matching the
+#    createOrReplace() convention used for the Iceberg write below.
+# ---------------------------------------------------------------------------
+(
+    df.select(
+        col("id"),
+        col("terms").alias("terms_text"),
+        col("_terms_s3_uri").alias("s3_uri"),
+    )
+    .write.mode("overwrite")
+    .format("parquet")
+    .save(f"s3://{args['bronze_bucket']}/{TERMS_CATALOG_PREFIX}")
+)
+
+# Now overwrite the `terms` column in place: same column name and position
+# in the schema, but the value is the s3:// pointer instead of the raw text.
 # The other columns (character_length, utf8_byte_length,
 # exceeds_redshift_varchar_65535_bytes) are left untouched — they still
 # describe the size of the *original* text, which is useful audit metadata.
-df = df.withColumn("terms", offload_udf(col("id"), col("terms")))
+df = df.withColumn("terms", col("_terms_s3_uri")).drop("_terms_s3_uri")
 
 # ---------------------------------------------------------------------------
-# 7. Add metadata columns
+# 8. Add metadata columns
 #    Bronze-layer convention: track when and where each row came from.
 #    _ingestion_timestamp — UTC timestamp of this job run (same value for all rows)
 #    _source_file         — S3 path of the specific file each row was read from
@@ -199,7 +240,7 @@ df = (
 )
 
 # ---------------------------------------------------------------------------
-# 8. Write as an Iceberg table to the bronze bucket
+# 9. Write as an Iceberg table to the bronze bucket
 #    "glue_catalog" here refers to the catalog we registered in step 2.
 #    Spark resolves "glue_catalog.database.table" as:
 #      catalog   = glue_catalog  (our Iceberg/Glue catalog)
@@ -220,7 +261,7 @@ full_table_name = f"glue_catalog.{args['database_name']}.{args['table_name']}"
 )
 
 # ---------------------------------------------------------------------------
-# 9. Commit the job
+# 10. Commit the job
 #    Signals to Glue that the job finished successfully.
 #    Glue uses this to update the job run status in the console.
 # ---------------------------------------------------------------------------

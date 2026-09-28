@@ -222,10 +222,13 @@ resource "aws_glue_trigger" "silver_to_gold" {
 }
 
 # ---------------------------------------------------------------------------
-# Terms catalog — reshapes the claim-check terms/{id}.txt objects into a
-# queryable Parquet table (id, terms_text, s3_uri) so the full `terms` text
-# can be joined against any Redshift table (native or Spectrum) instead of
-# being dereferenced by hand, one s3:// pointer at a time.
+# Terms catalog — a queryable Parquet table (id, terms_text, s3_uri) so the
+# full `terms` text can be joined against any Redshift table (native or
+# Spectrum) instead of being dereferenced by hand, one s3:// pointer at a
+# time. Populated directly by source_to_bronze_offload (step 7 in that
+# script) — while it still has the original `terms` text in hand, before
+# overwriting that column with the s3:// pointer — rather than by a
+# separate job that re-reads every terms/{id}.txt object back from S3.
 # ---------------------------------------------------------------------------
 
 # Glue table declared directly in Terraform (not job-inferred). It lives in
@@ -269,64 +272,5 @@ resource "aws_glue_catalog_table" "terms_text" {
       name = "s3_uri"
       type = "string"
     }
-  }
-}
-
-# Upload the terms -> catalog reshaping script to S3 so Glue can fetch it at job startup
-resource "aws_s3_object" "terms_to_catalog" {
-  bucket = aws_s3_bucket.glue_scripts.id
-  key    = "scripts/terms_to_catalog.py"
-  source = "${path.module}/scripts/terms_to_catalog.py"
-  etag   = filemd5("${path.module}/scripts/terms_to_catalog.py")
-}
-
-# Glue Python Shell job — reads every terms/{id}.txt object's full body via
-# boto3 (never splitting multi-line text on newlines), derives `id` from the
-# filename, and (re)writes the Parquet file backing the terms_text table
-# declared above. Full-refresh on every run, matching the createOrReplace()
-# convention used by the Spark jobs.
-resource "aws_glue_job" "terms_to_catalog" {
-  name         = "${var.project_name}-terms-to-catalog"
-  role_arn     = aws_iam_role.glue_job.arn
-  max_capacity = 0.0625 # smallest Python Shell capacity — no Spark needed
-
-  command {
-    name            = "pythonshell"
-    script_location = "s3://${aws_s3_bucket.glue_scripts.bucket}/scripts/terms_to_catalog.py"
-    python_version  = "3.9"
-  }
-
-  default_arguments = {
-    # pyarrow isn't guaranteed to be preinstalled on the Python Shell 3.9
-    # runtime, so pull it explicitly at job startup.
-    "--additional-python-modules" = "pyarrow"
-
-    # Job parameters — available inside terms_to_catalog.py via getResolvedOptions
-    "--terms_bucket"   = aws_s3_bucket.terms.bucket
-    "--terms_prefix"   = "terms/"
-    "--catalog_bucket" = aws_s3_bucket.bronze.bucket
-    "--catalog_prefix" = "terms_catalog/"
-
-    "--enable-continuous-cloudwatch-log" = "true"
-  }
-
-  tags = {
-    Project = var.project_name
-    Layer   = "terms-catalog"
-  }
-}
-
-# On-demand trigger — start this manually via the AWS console or CLI:
-#   aws glue start-trigger --name <trigger_name> --profile pluralsight
-resource "aws_glue_trigger" "terms_to_catalog" {
-  name = "${var.project_name}-terms-to-catalog-trigger"
-  type = "ON_DEMAND"
-
-  actions {
-    job_name = aws_glue_job.terms_to_catalog.name
-  }
-
-  tags = {
-    Project = var.project_name
   }
 }

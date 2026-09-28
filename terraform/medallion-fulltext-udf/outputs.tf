@@ -53,11 +53,6 @@ output "glue_gold_job_name" {
   value       = aws_glue_job.silver_to_gold.name
 }
 
-output "glue_terms_catalog_job_name" {
-  description = "Name of the Glue Python Shell job that reshapes terms/{id}.txt objects into the queryable terms_text Parquet table"
-  value       = aws_glue_job.terms_to_catalog.name
-}
-
 output "eventbridge_rule_name" {
   description = "EventBridge rule watching the source bucket for new .csv uploads"
   value       = aws_cloudwatch_event_rule.source_csv_uploaded.name
@@ -114,7 +109,7 @@ output "redshift_gold_table" {
 }
 
 output "redshift_terms_table" {
-  description = "Redshift query target for the terms text table (via Spectrum) after the terms_to_catalog job runs"
+  description = "Redshift query target for the terms text table (via Spectrum), populated by source_to_bronze_offload"
   value       = "${var.redshift_external_schema_name}.${var.terms_catalog_table_name}"
 }
 
